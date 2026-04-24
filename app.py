@@ -4,10 +4,6 @@ import pdfplumber
 import re
 import streamlit as st
 
-# --- AVISO DE EXTRAÇÃO ---
-# Nota: A extração de PDFs depende da estrutura do arquivo. 
-# Se os números não forem detectados, verifique se o PDF tem texto selecionável.
-
 def extrair_dados_pdf(pdf_file):
     try:
         with pdfplumber.open(pdf_file) as pdf:
@@ -15,19 +11,16 @@ def extrair_dados_pdf(pdf_file):
             for page in pdf.pages:
                 texto += page.extract_text() + "\n"
             
-            # Buscando padrões de porcentagem (OTDA, Extravio, Devolução)
-            # Adaptado para encontrar valores como 97.9%, 0.8% etc.
+            # Busca OTDA (valores altos) e Qualidade (valores baixos)
             pct_matches = re.findall(r'(\d{1,2}[,.]\d)%', texto)
-            
-            # Buscando números inteiros (Volume de Envios)
-            # Filtra números grandes que costumam ser o volume de pacotes
-            vol_matches = re.findall(r'\b(\d{2,4})\b', texto)
+            # Busca Volumes (números de 3 a 4 dígitos)
+            vol_matches = re.findall(r'\b(\d{3,4})\b', texto)
             
             return {
-                "texto": texto,
                 "otda": [float(x.replace(',', '.')) for x in pct_matches if float(x.replace(',', '.')) > 50][:4],
-                "qualidade": [float(x.replace(',', '.')) for x in pct_matches if float(x.replace(',', '.')) < 15],
-                "envios": [int(x) for x in vol_matches if 20 < int(x) < 5000][:4]
+                "extravio": [float(x.replace(',', '.')) for x in pct_matches if 0 <= float(x.replace(',', '.')) < 2][:4],
+                "devolucao": [float(x.replace(',', '.')) for x in pct_matches if 2 <= float(x.replace(',', '.')) < 15][:4],
+                "envios": [int(x) for x in vol_matches][:4]
             }
     except Exception as e:
         st.error(f"Erro na leitura do PDF: {e}")
@@ -35,23 +28,49 @@ def extrair_dados_pdf(pdf_file):
 
 def main():
     st.title("🚀 Automação CS: Dashboard de Performance")
-    st.warning("⚠️ AVISO: A extração de dados de PDF pode conter erros dependendo da formatação do arquivo bruto.")
+    st.warning("⚠️ AVISO: Verifique se os dados extraídos abaixo conferem com o PDF.")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        csv_file = st.file_uploader("Suba o CSV de Tickets", type="csv")
-    with col2:
-        pdf_file = st.file_uploader("Suba o PDF Operacional", type="pdf")
+    csv_file = st.file_uploader("Suba o CSV de Tickets", type="csv")
+    pdf_file = st.file_uploader("Suba o PDF Operacional", type="pdf")
 
     if csv_file and pdf_file:
-        # Processamento
         dados_pdf = extrair_dados_pdf(pdf_file)
         
-        # Exemplo de lógica para gerar o gráfico unificado
-        # [Aqui você insere a função de plotagem com Matplotlib que criamos anteriormente]
-        
-        st.success("Dados processados! Verifique se os valores batem com o PDF antes de exportar.")
-        # st.pyplot(fig)
+        # Processar CSV de Tickets
+        df_tkt = pd.read_csv(csv_file)
+        df_tkt.columns = [col.replace('\n', ' ') for col in df_tkt.columns]
+        row_sum = df_tkt[df_tkt['Ocorrência'].str.strip() == 'SUM'].iloc[0]
+        tickets_mes = [row_sum['Janeiro Tickets'], row_sum['Fevereiro Tickets'], 
+                       row_sum['Março Tickets'], row_sum['Abril Tickets']]
+
+        if dados_pdf:
+            # LÓGICA DE PLOTAGEM (O que faz o gráfico aparecer)
+            fig, ax1 = plt.subplots(figsize=(12, 7))
+            meses = ['Jan', 'Fev', 'Mar', 'Abr']
+            
+            # Barras (Envios)
+            ax1.bar(meses, dados_pdf['envios'], color='#CFD8DC', alpha=0.5, label='Qtd Envios')
+            ax1.set_ylabel('Volume de Envios')
+            
+            # Linhas (Performance)
+            ax2 = ax1.twinx()
+            ax2.plot(meses, dados_pdf['otda'], marker='o', color='#1A237E', label='OTDA (%)', linewidth=3)
+            
+            # Cálculo % Tickets
+            tkt_rate = [(t / e) * 100 for t, e in zip(tickets_mes, dados_pdf['envios'])]
+            ax2.plot(meses, tkt_rate, marker='s', color='#E65100', linestyle='--', label='% Tickets')
+            
+            ax2.plot(meses, dados_pdf['extravio'], marker='^', color='#B71C1C', label='% Extravio')
+            ax2.plot(meses, dados_pdf['devolucao'], marker='v', color='#4A148C', label='% Devolução')
+            
+            ax2.set_ylim(-15, 110)
+            ax1.legend(loc='upper left')
+            ax2.legend(loc='upper right')
+            
+            # O COMANDO MÁGICO DO STREAMLIT:
+            st.pyplot(fig) 
+            
+            st.success("Gráfico gerado com sucesso!")
 
 if __name__ == "__main__":
     main()
